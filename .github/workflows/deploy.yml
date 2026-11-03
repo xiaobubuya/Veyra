@@ -109,9 +109,11 @@ jobs:
               # 顺带确认网关两个口子的行为没被改坏
               api=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8888/api/health)
               blocked=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8888/api/admin/settings)
-              gate=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8088/)
-              echo "8888/api/health=$api  8888/api/admin/settings=$blocked  8088/(未登录)=$gate"
-              [ "$api" = "200" ] && [ "$blocked" = "404" ] && [ "$gate" = "302" ]
+              console=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8088/)
+              admin=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8088/api/admin/settings)
+              echo "8888/api/health=$api  8888/api/admin/settings=$blocked  8088/=$console  8088/api/admin/settings(未登录)=$admin"
+              # 8088 首页给 WebUI（200），管理接口未登录必须 401（后端 requireAdmin 拦）
+              [ "$api" = "200" ] && [ "$blocked" = "404" ] && [ "$console" = "200" ] && [ "$admin" = "401" ]
               exit 0
             fi
             sleep 1
