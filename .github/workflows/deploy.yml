@@ -1,24 +1,24 @@
 name: Deploy Backend
 
-# 后端部署：走本机 self-hosted runner，拉代码 → 同步到 /opt/veyra/server → pm2 重启。
-# 不做 Docker：这台机器没装 docker，容器化那套由 docker-build.yml 负责发镜像给 NAS。
+# 后端部署：本机 self-hosted runner → 拉 server/ → pm2 重启 → 健康检查。
+# 不做 Docker：这台机器没装 docker；容器镜像那套由 docker-build.yml 负责（手动跑，给 NAS 用）。
 #
-# 为什么 sparse checkout：仓库 46MB（APK 测试素材 + ffmpeg jar 全在里面），
-# 本机到 GitHub 只有 1~2MB/分钟，全量 checkout 要几十分钟。部署只需要 server/ 和 deploy/，
-# 配合 blob:none 只下这两个目录的文件（约 3MB）。
+# 为什么不用 actions/checkout：
+#   仓库 46MB（APK 测试素材 + ffmpeg jar），本机到 github.com 的 git 传输只有 1~8KB/s，
+#   sparse checkout 也要几十分钟。deploy/sync-server.py 改成按 Git tree 逐文件走
+#   jsDelivr / api.github.com 取内容（实测 100~120KB/s），并且按 git blob sha1 跳过未变文件。
 #
 # 前置（一次性，机器上）：
 #   /opt/veyra/ecosystem.config.js   pm2 进程定义（PORT=8890 / HOST=127.0.0.1 / DATA_DIR=/opt/veyra/data）
-#   /etc/nginx/conf.d/veyra.conf     8888 应用 API + 8088 管理员控制台（账号网关）
-#
-# 端口约定：后端只听 127.0.0.1:8890，公网由 nginx 那层转。
+#   /etc/nginx/conf.d/veyra.conf     由本 workflow 从这里同步（8888 应用 API + 8088 管理员控制台）
+#   端口约定：后端只听 127.0.0.1:8890，公网由 nginx 那层转。
 
 on:
   push:
     branches: [main]
     paths:
       - 'server/**'
-      - 'deploy/nginx-veyra.conf'
+      - 'deploy/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -29,32 +29,43 @@ concurrency:
   group: veyra-deploy
   cancel-in-progress: false
 
+env:
+  DEST: /opt/veyra/server
+  DEST_NGINX: /etc/nginx/conf.d/veyra.conf
+
 jobs:
   deploy:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          filter: blob:none
-          sparse-checkout: |
-            server
-            deploy
-
-      - name: 同步代码到 /opt/veyra/server
+      - name: 取部署脚本
         run: |
           set -euo pipefail
-          mkdir -p /opt/veyra/server
-          # node_modules 留在机器上，不参与同步；其余按仓库为准（--delete 清掉旧文件）
-          rsync -a --delete --exclude 'node_modules' --exclude 'data' \
-                server/ /opt/veyra/server/
-          chmod +x /opt/veyra/server/hongguo-signer/hongguo-signer 2>/dev/null || true
+          URL_CDN="https://cdn.jsdelivr.net/gh/${{ github.repository }}@${{ github.sha }}/deploy/sync-server.py"
+          URL_API="https://api.github.com/repos/${{ github.repository }}/contents/deploy/sync-server.py?ref=${{ github.sha }}"
+          if curl -fsSL --max-time 60 "$URL_CDN" -o /tmp/sync-server.py && [ -s /tmp/sync-server.py ]; then
+            echo "从 jsDelivr 取到部署脚本"
+          else
+            echo "jsDelivr 不可用，改走 api.github.com"
+            curl -fsSL --max-time 90 \
+                 -H "Authorization: Bearer ${{ github.token }}" \
+                 -H "Accept: application/vnd.github.raw" \
+                 "$URL_API" -o /tmp/sync-server.py
+          fi
+          head -n 3 /tmp/sync-server.py
+
+      - name: 同步 server/ 到 /opt/veyra/server
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EXTRA_PATHS: deploy/nginx-veyra.conf
+        run: python3 /tmp/sync-server.py
 
       - name: 安装生产依赖
         run: |
           set -euo pipefail
           export PATH="/usr/local/bin:$PATH"
-          cd /opt/veyra/server
+          cd "$DEST"
           # 本机到 npmjs 慢，走国内镜像
           npm config set registry https://registry.npmmirror.com
           npm ci --omit=dev --no-audit --no-fund
@@ -62,17 +73,17 @@ jobs:
       - name: 同步 nginx 站点配置（变了才 reload）
         run: |
           set -euo pipefail
-          CONF_SRC="$GITHUB_WORKSPACE/deploy/nginx-veyra.conf"
-          CONF_DST=/etc/nginx/conf.d/veyra.conf
-          if [ -f "$CONF_DST" ] && cmp -s "$CONF_SRC" "$CONF_DST"; then
+          SRC="$DEST/_extra/nginx-veyra.conf"
+          test -f "$SRC" || { echo "没拿到 nginx 配置：$SRC" >&2; exit 1; }
+          if [ -f "$DEST_NGINX" ] && cmp -s "$SRC" "$DEST_NGINX"; then
             echo "nginx 配置未变，跳过"
             exit 0
           fi
-          cp -a "$CONF_DST" "$CONF_DST.bak" 2>/dev/null || true
-          install -m 600 "$CONF_SRC" "$CONF_DST"
+          cp -a "$DEST_NGINX" "$DEST_NGINX.bak" 2>/dev/null || true
+          install -m 600 "$SRC" "$DEST_NGINX"
           if ! nginx -t; then
             echo "nginx 配置校验失败，回滚" >&2
-            if [ -f "$CONF_DST.bak" ]; then mv -f "$CONF_DST.bak" "$CONF_DST"; fi
+            [ -f "$DEST_NGINX.bak" ] && mv -f "$DEST_NGINX.bak" "$DEST_NGINX"
             exit 1
           fi
           systemctl reload nginx
@@ -95,6 +106,12 @@ jobs:
           for i in $(seq 1 30); do
             if curl -fsS --max-time 3 http://127.0.0.1:8890/api/health >/dev/null; then
               echo "后端健康检查通过"
+              # 顺带确认网关两个口子的行为没被改坏
+              api=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8888/api/health)
+              blocked=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8888/api/admin/settings)
+              gate=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8088/)
+              echo "8888/api/health=$api  8888/api/admin/settings=$blocked  8088/(未登录)=$gate"
+              [ "$api" = "200" ] && [ "$blocked" = "404" ] && [ "$gate" = "302" ]
               exit 0
             fi
             sleep 1
