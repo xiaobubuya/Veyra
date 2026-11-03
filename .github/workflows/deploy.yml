@@ -70,6 +70,27 @@ jobs:
           npm config set registry https://registry.npmmirror.com
           npm ci --omit=dev --no-audit --no-fund
 
+      - name: 准备网关放行密钥
+        run: |
+          set -euo pipefail
+          # 8088 过了账号网关（OAuth）之后要告诉后端「这人就是管理员」，
+          # 后端据此免掉二次的 ADMIN_PASSWORD 登录。密钥只在本机：后端读文件，
+          # nginx 用 snippet 里的 set 变量。两边同一份，首次部署生成后不再变。
+          SECRET_FILE=/opt/veyra/gate.secret
+          SNIPPET=/etc/nginx/snippets/veyra-gate.conf
+          mkdir -p /etc/nginx/snippets
+          if [ ! -s "$SECRET_FILE" ]; then
+            umask 077
+            openssl rand -hex 32 > "$SECRET_FILE"
+            echo "生成新的网关密钥"
+          fi
+          chmod 600 "$SECRET_FILE"
+          SECRET=$(cat "$SECRET_FILE")
+          umask 077
+          printf 'set $veyra_gate_secret "%s";\n' "$SECRET" > "$SNIPPET"
+          chmod 600 "$SNIPPET"
+          echo "网关密钥已就位（长度 ${#SECRET}）"
+
       - name: 同步 nginx 站点配置（变了才 reload）
         run: |
           set -euo pipefail

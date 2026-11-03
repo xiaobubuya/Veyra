@@ -98,6 +98,22 @@ function regTooFrequent(req) {
 const ADMIN_SESSION_TTL_MS = 8 * 3600 * 1000; // 管理员会话 8 小时
 const adminSessions = new Map(); // adminToken -> expiry ms
 
+// 账号网关放行标记（/opt/veyra/gate.secret，由部署流程生成，只在本机读写）：
+// 8088 挂在 nginx auth_request（muyaya 账号体系）后面，网关验过白名单后给上游加
+// X-Veyra-Gate 头；命中即视为管理员已登录，WebUI 不用再输一遍 ADMIN_PASSWORD。
+// 8888 公网口不注入这个头，所以管理接口在那边仍然打不动。
+const GATE_SECRET_FILE = process.env.VEYRA_GATE_SECRET_FILE || '/opt/veyra/gate.secret';
+const GATE_SECRET = (() => {
+  try { return fs.readFileSync(GATE_SECRET_FILE, 'utf8').trim(); } catch { return ''; }
+})();
+if (!GATE_SECRET) console.log('[veyra] 未读到网关密钥（' + GATE_SECRET_FILE + '），管理台仍需管理员密码登录');
+function gateAuthed(req) {
+  if (!GATE_SECRET) return false;
+  const given = String(req.headers['x-veyra-gate'] || '');
+  if (given.length !== GATE_SECRET.length) return false;
+  try { return crypto.timingSafeEqual(Buffer.from(given), Buffer.from(GATE_SECRET)); } catch { return false; }
+}
+
 // 黄果站点域名白名单（后端转发接口只允许抓这些域名，避免变成开放代理）
 // 主站为 *.pqhybuxo.cc 系；封面 CDN pic.drleao.cn / 详情图 expose.eisees.com；视频播放 yd-hls.hzjvlo.cn；
 // hongguoduanju.com 为红果官方站（搜索联想接口 /incent_resource/suggestion 补全短剧名用）
@@ -210,6 +226,7 @@ function extractBearer(req) {
   return match ? match[1] : null;
 }
 function requireAdmin(req, res, next) {
+  if (gateAuthed(req)) return next(); // 已过账号网关（白名单用户），免管理员密码
   if (!ADMIN_PASSWORD) return res.status(503).json({ error: '服务端未配置 ADMIN_PASSWORD，管理功能不可用' });
   const token = extractBearer(req);
   const expiry = token && adminSessions.get(token);
@@ -228,6 +245,7 @@ function issueAdminToken() {
 
 // NAS 下载任务鉴权双通道：WebUI 管理台 adminToken，或 APK 里 role=admin 的账号 token（两套体系都认）
 function requireAdminOrAccountAdmin(req, res, next) {
+  if (gateAuthed(req)) return next(); // 已过账号网关（白名单用户），免管理员密码
   if (!ADMIN_PASSWORD) return res.status(503).json({ error: '服务端未配置 ADMIN_PASSWORD，管理功能不可用' });
   const token = extractBearer(req);
   const expiry = token && adminSessions.get(token);
