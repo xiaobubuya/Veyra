@@ -1,0 +1,93 @@
+name: Deploy Backend
+
+# 后端部署：走本机 self-hosted runner，拉代码 → 同步到 /opt/veyra/server → pm2 重启。
+# 不做 Docker：这台机器没装 docker，容器化那套由 docker-build.yml 负责发镜像给 NAS。
+#
+# 前置（一次性，机器上）：
+#   /opt/veyra/ecosystem.config.js   pm2 进程定义（PORT=8890 / HOST=127.0.0.1 / DATA_DIR=/opt/veyra/data）
+#   /etc/nginx/conf.d/veyra.conf     8888 应用 API + 8088 管理员控制台（账号网关）
+#
+# 端口约定：后端只听 127.0.0.1:8890，公网由 nginx 那层转。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'deploy/nginx-veyra.conf'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: veyra-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 同步代码到 /opt/veyra/server
+        run: |
+          set -euo pipefail
+          mkdir -p /opt/veyra/server
+          # node_modules 留在机器上，不参与同步；其余按仓库为准（--delete 清掉旧文件）
+          rsync -a --delete --exclude 'node_modules' --exclude 'data' \
+                server/ /opt/veyra/server/
+          chmod +x /opt/veyra/server/hongguo-signer/hongguo-signer 2>/dev/null || true
+
+      - name: 安装生产依赖
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/bin:$PATH"
+          cd /opt/veyra/server
+          npm ci --omit=dev --no-audit --no-fund
+
+      - name: 同步 nginx 站点配置（变了才 reload）
+        run: |
+          set -euo pipefail
+          CONF_SRC="$GITHUB_WORKSPACE/deploy/nginx-veyra.conf"
+          CONF_DST=/etc/nginx/conf.d/veyra.conf
+          if [ -f "$CONF_DST" ] && cmp -s "$CONF_SRC" "$CONF_DST"; then
+            echo "nginx 配置未变，跳过"
+            exit 0
+          fi
+          cp -a "$CONF_DST" "$CONF_DST.bak" 2>/dev/null || true
+          install -m 600 "$CONF_SRC" "$CONF_DST"
+          if ! nginx -t; then
+            echo "nginx 配置校验失败，回滚" >&2
+            if [ -f "$CONF_DST.bak" ]; then mv -f "$CONF_DST.bak" "$CONF_DST"; fi
+            exit 1
+          fi
+          systemctl reload nginx
+          echo "nginx 已 reload"
+
+      - name: 重启后端（pm2）
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/bin:$PATH"
+          if pm2 describe veyra-backend >/dev/null 2>&1; then
+            pm2 restart veyra-backend --update-env
+          else
+            pm2 start /opt/veyra/ecosystem.config.js --only veyra-backend
+          fi
+          pm2 save
+
+      - name: 健康检查
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:8890/api/health >/dev/null; then
+              echo "后端健康检查通过"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "后端 30 秒内没起来，日志尾巴：" >&2
+          tail -n 50 /root/.pm2/logs/veyra-backend-error.log >&2 || true
+          tail -n 50 /root/.pm2/logs/veyra-backend-out.log >&2 || true
+          exit 1

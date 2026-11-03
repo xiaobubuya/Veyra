@@ -36,6 +36,9 @@ const { createAppUpdater } = require('./app-updater');
 const { mountReleaseHook } = require('./release-hook');
 
 const PORT = parseInt(process.env.PORT || '8080', 10);
+// 监听地址：默认全网卡（Docker/裸跑通用）。放在 nginx 网关后面时设 HOST=127.0.0.1，
+// 只让网关进程进来，公网端口由 nginx 那层控制（应用端 /api 与管理员控制台各开一个口）。
+const HOST = process.env.HOST || '0.0.0.0';
 // 数据目录：环境变量指定，默认 /data（docker-compose volume 挂载）。
 // 裸跑/本地运行根目录不可写时自动回退到可写目录，避免服务因 EACCES 直接崩溃。
 let DATA_DIR = process.env.DATA_DIR || '/data';
@@ -1270,8 +1273,8 @@ app.get('/api/update/apk', (req, res) => {
   });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`veyra-backend listening on 0.0.0.0:${PORT}, data dir: ${DATA_DIR}`);
+app.listen(PORT, HOST, () => {
+  console.log(`veyra-backend listening on ${HOST}:${PORT}, data dir: ${DATA_DIR}`);
   // 更新包缓存：启动 20 秒后跑第一轮，之后每 10 分钟一次（都发生在后台，不挡请求）
   appUpdater.start();
 });

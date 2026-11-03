@@ -115,7 +115,7 @@ contentReady = api("content-status").then((status) => {
   state.privateUnlocked = Boolean(status.unlocked);
   try {
     api("get-proxy-mode").then((v) => {
-      state.proxyMode = Number(v) || 3;
+      state.proxyMode = Number(v) || 1;
     }).catch(() => {
     });
   } catch (ignore) {
@@ -1614,10 +1614,10 @@ async function submitDownloadTo(target, remoteId) {
         }
         if (sourceNow !== "huangguo" && sourceNow !== "hongguo") sourceNow = contentSource;
       }
-      let proxyModeNow = Number(state.proxyMode) || 3;
+      let proxyModeNow = Number(state.proxyMode) || 1;
       try {
         const pmv = await api("get-proxy-mode");
-        if (pmv !== null && pmv !== void 0 && pmv !== "") proxyModeNow = Number(pmv) || 3;
+        if (pmv !== null && pmv !== void 0 && pmv !== "") proxyModeNow = Number(pmv) || 1;
       } catch (ignore) {
       }
       console.log(`[dl-judge] source=${sourceNow} proxyMode=${proxyModeNow} role=${(_b2 = state.account) == null ? void 0 : _b2.role} remote=${remoteId || "-"}`);
@@ -1651,23 +1651,16 @@ function renderSettings() {
   loadRemoteServers(true).catch(() => {
   });
 }
-const PROXY_MODE_NAMES = { 1: "\u4EC5\u76F4\u8FDE", 2: "\u4EC5\u4EE3\u7406", 3: "\u8D70\u540E\u7AEF\u8F6C\u53D1" };
-const roleCanUseBackend = () => {
-  var _a2, _b2;
-  return ((_a2 = state.account) == null ? void 0 : _a2.role) === "admin" || ((_b2 = state.account) == null ? void 0 : _b2.role) === "vip";
-};
+const PROXY_MODE_NAMES = { 1: "\u4EC5\u76F4\u8FDE", 2: "\u4EC5\u4EE3\u7406" };
 function setProxyModeLabel(mode) {
-  state.proxyMode = Number(mode) || 3;
-  if (state.proxyMode < 1 || state.proxyMode > 3) state.proxyMode = 3;
-  if (state.proxyMode === 3 && !roleCanUseBackend()) state.proxyMode = 1;
+  state.proxyMode = Number(mode) || 1;
+  if (state.proxyMode !== 2) state.proxyMode = 1;
   const label = document.getElementById("proxy-mode-label");
-  if (label) label.textContent = PROXY_MODE_NAMES[state.proxyMode] || "\u8D70\u540E\u7AEF\u8F6C\u53D1";
+  if (label) label.textContent = PROXY_MODE_NAMES[state.proxyMode] || "\u4EC5\u76F4\u8FDE";
   const menu = document.getElementById("proxy-mode-menu");
   if (menu) {
     for (const item of menu.querySelectorAll("[data-mode]")) {
       item.classList.toggle("active", Number(item.dataset.mode) === state.proxyMode);
-      item.classList.toggle("disabled", Number(item.dataset.mode) === 3 && !roleCanUseBackend());
-      item.toggleAttribute("disabled", Number(item.dataset.mode) === 3 && !roleCanUseBackend());
     }
   }
   updateProxySummary();
@@ -1705,11 +1698,7 @@ function initProxyModeDropdown() {
   for (const item of menu.querySelectorAll("[data-mode]")) {
     item.addEventListener("click", (event) => {
       event.stopPropagation();
-      const value = Number(item.dataset.mode) || 3;
-      if (value === 3 && !roleCanUseBackend()) {
-        toast("\u8D70\u540E\u7AEF\u8F6C\u53D1\u4EC5\u7BA1\u7406\u5458\u4E0E\u7279\u6743\u7EC4\u53EF\u7528\uFF0C\u8BF7\u8054\u7CFB\u7BA1\u7406\u5458\u5F00\u901A", true);
-        return;
-      }
+      const value = Number(item.dataset.mode) || 1;
       setProxyModeLabel(value);
       close();
       api("set-proxy-mode", { value }).then(() => {
@@ -1799,7 +1788,7 @@ window.__veyraAccountBack = () => {
 };
 window.__veyraAccountOpen = () => !!(accountPop && !accountPop.hidden);
 function proxySummaryText() {
-  const m = PROXY_MODE_NAMES[state.proxyMode] || "\u8D70\u540E\u7AEF\u8F6C\u53D1";
+  const m = PROXY_MODE_NAMES[state.proxyMode] || "\u4EC5\u76F4\u8FDE";
   return state.proxy ? `${m} \xB7 ${state.proxy}` : m;
 }
 function updateProxySummary() {
@@ -1818,11 +1807,10 @@ function buildProxyPopHtml() {
     </div>
     <span id="proxy-test-result" class="proxy-test-result" hidden></span>
     <div class="proxy-mode-dd" id="proxy-mode-dd">
-      <button type="button" class="proxy-mode-dd-btn" data-mode-toggle aria-haspopup="listbox" aria-expanded="false"><span id="proxy-mode-label">${esc(PROXY_MODE_NAMES[state.proxyMode] || "\u8D70\u540E\u7AEF\u8F6C\u53D1")}</span>${icon("arrow")}</button>
+      <button type="button" class="proxy-mode-dd-btn" data-mode-toggle aria-haspopup="listbox" aria-expanded="false"><span id="proxy-mode-label">${esc(PROXY_MODE_NAMES[state.proxyMode] || "\u4EC5\u76F4\u8FDE")}</span>${icon("arrow")}</button>
       <div class="proxy-mode-dd-menu" id="proxy-mode-menu" hidden>
         <button type="button" data-mode="1">\u4EC5\u76F4\u8FDE</button>
         <button type="button" data-mode="2">\u4EC5\u4EE3\u7406</button>
-        <button type="button" data-mode="3">\u8D70\u540E\u7AEF\u8F6C\u53D1</button>
       </div>
     </div>
   </div>`;
@@ -1854,7 +1842,7 @@ function openProxyPop() {
   }).catch(() => {
   });
   api("get-proxy-mode").then((value) => {
-    setProxyModeLabel(Number(value) || 3);
+    setProxyModeLabel(Number(value) || 1);
   }).catch(() => {
   });
   const input = document.getElementById("proxy-address");

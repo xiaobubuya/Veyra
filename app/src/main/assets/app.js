@@ -63,7 +63,7 @@ contentReady = api('content-status').then(status => {
   contentSource = status.source || 'hongguo';
   state.privateUnlocked = Boolean(status.unlocked);
   // 启动即拉取黄果网络通道（避免重启后 state.proxyMode 未初始化导致下载误判手机直连）
-  try { api('get-proxy-mode').then(v => { state.proxyMode = Number(v) || 3; }).catch(() => {}); } catch (ignore) {}
+  try { api('get-proxy-mode').then(v => { state.proxyMode = Number(v) || 1; }).catch(() => {}); } catch (ignore) {}
   document.title = 'Veyra';
   if (!privateMode()) {
     categoryIds.adult = ['short']; categoryIds.ai = ['comic'];
@@ -1462,8 +1462,8 @@ async function submitDownloadTo(target, remoteId) {
       // 原"走后端转发"(proxyMode=3：NAS 全权下载→手机拉→手机合并)已废弃：手机本地 ts→mp4
       // 合并（含源显式 IV 保留）修好后，转发无需 NAS 下载合并，与代理/直连同一条链路；
       // NAS 端"下载到 NAS"入口仍保留（主动下载到 NAS 用）。
-      let proxyModeNow = Number(state.proxyMode) || 3;
-      try { const pmv = await api('get-proxy-mode'); if (pmv !== null && pmv !== undefined && pmv !== '') proxyModeNow = Number(pmv) || 3; } catch (ignore) {}
+      let proxyModeNow = Number(state.proxyMode) || 1;
+      try { const pmv = await api('get-proxy-mode'); if (pmv !== null && pmv !== undefined && pmv !== '') proxyModeNow = Number(pmv) || 1; } catch (ignore) {}
       console.log(`[dl-judge] source=${sourceNow} proxyMode=${proxyModeNow} role=${state.account?.role} remote=${remoteId || '-'}`);
       {
         const resolved = await resolveEpisodesForDownload(episodes);
@@ -1501,21 +1501,17 @@ function renderSettings() {
   loadRemoteServers(true).catch(() => {});   // 设置页摘要要显示「已配置几台」
 }
 
-const PROXY_MODE_NAMES = { 1: '仅直连', 2: '仅代理', 3: '走后端转发' };
-// 走后端转发仅管理员/特权组可用；普通用户选项灰色，点击提示联系管理员
-const roleCanUseBackend = () => state.account?.role === 'admin' || state.account?.role === 'vip';
+const PROXY_MODE_NAMES = { 1: '仅直连', 2: '仅代理' };
+// 「走后端转发」已移除：后端不再替客户端抓源站，内容一律由端上通道（直连/自有代理）拉取。
 function setProxyModeLabel(mode) {
-  state.proxyMode = Number(mode) || 3;
-  if (state.proxyMode < 1 || state.proxyMode > 3) state.proxyMode = 3;
-  if (state.proxyMode === 3 && !roleCanUseBackend()) state.proxyMode = 1; // 普通用户不允许走后端转发
+  state.proxyMode = Number(mode) || 1;
+  if (state.proxyMode !== 2) state.proxyMode = 1; // 旧存档里的 3（走后端转发）归一到仅直连
   const label = document.getElementById('proxy-mode-label');
-  if (label) label.textContent = PROXY_MODE_NAMES[state.proxyMode] || '走后端转发';
+  if (label) label.textContent = PROXY_MODE_NAMES[state.proxyMode] || '仅直连';
   const menu = document.getElementById('proxy-mode-menu');
   if (menu) {
     for (const item of menu.querySelectorAll('[data-mode]')) {
       item.classList.toggle('active', Number(item.dataset.mode) === state.proxyMode);
-      item.classList.toggle('disabled', Number(item.dataset.mode) === 3 && !roleCanUseBackend());
-      item.toggleAttribute('disabled', Number(item.dataset.mode) === 3 && !roleCanUseBackend());
     }
   }
   updateProxySummary();
@@ -1549,11 +1545,7 @@ function initProxyModeDropdown() {
   for (const item of menu.querySelectorAll('[data-mode]')) {
     item.addEventListener('click', event => {
       event.stopPropagation();
-      const value = Number(item.dataset.mode) || 3;
-      if (value === 3 && !roleCanUseBackend()) {
-        toast('走后端转发仅管理员与特权组可用，请联系管理员开通', true);
-        return;
-      }
+      const value = Number(item.dataset.mode) || 1;
       setProxyModeLabel(value);
       close();
       api('set-proxy-mode', { value }).then(() => {
@@ -1643,7 +1635,7 @@ window.__veyraAccountBack = () => { if (accountPop && !accountPop.hidden) { clos
 window.__veyraAccountOpen = () => !!(accountPop && !accountPop.hidden);
 // v0.18.109：黄果网络通道/关于 Veyra 弹窗化（同账号管理弹窗，复用外观 scrim/pop 结构）
 function proxySummaryText() {
-  const m = PROXY_MODE_NAMES[state.proxyMode] || '走后端转发';
+  const m = PROXY_MODE_NAMES[state.proxyMode] || '仅直连';
   return state.proxy ? `${m} · ${state.proxy}` : m;
 }
 function updateProxySummary() {
@@ -1662,11 +1654,10 @@ function buildProxyPopHtml() {
     </div>
     <span id="proxy-test-result" class="proxy-test-result" hidden></span>
     <div class="proxy-mode-dd" id="proxy-mode-dd">
-      <button type="button" class="proxy-mode-dd-btn" data-mode-toggle aria-haspopup="listbox" aria-expanded="false"><span id="proxy-mode-label">${esc(PROXY_MODE_NAMES[state.proxyMode] || '走后端转发')}</span>${icon('arrow')}</button>
+      <button type="button" class="proxy-mode-dd-btn" data-mode-toggle aria-haspopup="listbox" aria-expanded="false"><span id="proxy-mode-label">${esc(PROXY_MODE_NAMES[state.proxyMode] || '仅直连')}</span>${icon('arrow')}</button>
       <div class="proxy-mode-dd-menu" id="proxy-mode-menu" hidden>
         <button type="button" data-mode="1">仅直连</button>
         <button type="button" data-mode="2">仅代理</button>
-        <button type="button" data-mode="3">走后端转发</button>
       </div>
     </div>
   </div>`;
@@ -1693,7 +1684,7 @@ function openProxyPop() {
     if (input) input.value = state.proxy;
     updateProxySummary();
   }).catch(() => {});
-  api('get-proxy-mode').then(value => { setProxyModeLabel(Number(value) || 3); }).catch(() => {});
+  api('get-proxy-mode').then(value => { setProxyModeLabel(Number(value) || 1); }).catch(() => {});
   const input = document.getElementById('proxy-address');
   if (input) input.addEventListener('change', () => {
     const value = input.value.trim();

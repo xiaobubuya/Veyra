@@ -1094,12 +1094,10 @@ public final class MainActivity extends Activity {
         if ("set-proxy".equals(action)) { ProxySettings.set(this, args.optString("value")); return true; }
         if ("get-proxy-mode".equals(action)) return ProxySettings.mode(this);
         if ("set-proxy-mode".equals(action)) {
-          // 走后端转发仅管理员/特权组；普通用户强制仅直连并提示
-          if (args.optInt("value", ProxySettings.MODE_BACKEND) == ProxySettings.MODE_BACKEND
-              && !"admin".equals(account.role()) && !"vip".equals(account.role())) {
-            throw new IllegalArgumentException("走后端转发仅管理员与特权组可用，请联系管理员");
-          }
-          ProxySettings.setMode(this, args.optInt("value", ProxySettings.MODE_BACKEND)); return true;
+          // 「走后端转发」已移除：只接受 1（仅直连）/ 2（仅代理），其余值一律归一到仅直连
+          int requested = args.optInt("value", ProxySettings.MODE_DIRECT);
+          ProxySettings.setMode(this, requested == ProxySettings.MODE_PROXY ? ProxySettings.MODE_PROXY : ProxySettings.MODE_DIRECT);
+          return true;
         }
         if ("test-proxy".equals(action)) return testProxy();
         // ---- 远程服务器（SMB / WebDAV / FTP）：配置 + 传输 ----
