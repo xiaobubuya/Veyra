@@ -3,6 +3,10 @@ name: Deploy Backend
 # 后端部署：走本机 self-hosted runner，拉代码 → 同步到 /opt/veyra/server → pm2 重启。
 # 不做 Docker：这台机器没装 docker，容器化那套由 docker-build.yml 负责发镜像给 NAS。
 #
+# 为什么 sparse checkout：仓库 46MB（APK 测试素材 + ffmpeg jar 全在里面），
+# 本机到 GitHub 只有 1~2MB/分钟，全量 checkout 要几十分钟。部署只需要 server/ 和 deploy/，
+# 配合 blob:none 只下这两个目录的文件（约 3MB）。
+#
 # 前置（一次性，机器上）：
 #   /opt/veyra/ecosystem.config.js   pm2 进程定义（PORT=8890 / HOST=127.0.0.1 / DATA_DIR=/opt/veyra/data）
 #   /etc/nginx/conf.d/veyra.conf     8888 应用 API + 8088 管理员控制台（账号网关）
@@ -30,6 +34,12 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          filter: blob:none
+          sparse-checkout: |
+            server
+            deploy
 
       - name: 同步代码到 /opt/veyra/server
         run: |
@@ -45,6 +55,8 @@ jobs:
           set -euo pipefail
           export PATH="/usr/local/bin:$PATH"
           cd /opt/veyra/server
+          # 本机到 npmjs 慢，走国内镜像
+          npm config set registry https://registry.npmmirror.com
           npm ci --omit=dev --no-audit --no-fund
 
       - name: 同步 nginx 站点配置（变了才 reload）
