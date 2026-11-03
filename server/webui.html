@@ -622,7 +622,7 @@ async function loadCategoryView(force){
 
 // ---- 私密播放通道（localStorage 持久化） ----
 const channelKey='veyraPrivateChannel';
-let privateChannel=localStorage.getItem(channelKey)||'relay';
+let privateChannel=localStorage.getItem(channelKey)||'direct'; // 默认直连：后端不再替客户端抓源站；relay 只留给管理台排查源站用
 function loadChannelUi(){
   document.getElementById('ch-relay').classList.toggle('active',privateChannel==='relay');
   document.getElementById('ch-direct').classList.toggle('active',privateChannel==='direct');
