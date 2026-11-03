@@ -361,12 +361,20 @@ document.getElementById('gate-btn').onclick=gateLogin;
 document.getElementById('gate-pass').addEventListener('keydown',e=>{if(e.key==='Enter')gateLogin()});
 
 (async()=>{
-  if(!adminToken){document.getElementById('gate-pass').focus();return}
+  // 先看本地有没有管理员 token；有就问一句还有效没
+  if(adminToken){
+    try{
+      const r=await fetch('/api/admin/session',{headers:AUTH()});
+      if(r.ok){document.getElementById('login-gate').style.display='none';loadView();return}
+    }catch(e){}
+    adminToken='';localStorage.removeItem('veyraAdmin');
+  }
+  // 没有 token 也要问一次：8088 挂在账号网关后面，网关放行时 nginx 会带
+  // X-Veyra-Gate 过来，后端直接 200 —— 这种情况不该再弹密码框。
   try{
     const r=await fetch('/api/admin/session',{headers:AUTH()});
     if(r.ok){document.getElementById('login-gate').style.display='none';loadView();return}
   }catch(e){}
-  adminToken='';localStorage.removeItem('veyraAdmin');
   document.getElementById('gate-pass').focus();
 })();
 
